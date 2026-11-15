@@ -44,7 +44,7 @@ export default function App() {
   }
 
   useEffect(() => () => clientRef.current?.deactivate(), []);
-  useEffect(() => finRef.current?.scrollIntoView({ behavior: "smooth" }), [mensajes]);
+  useEffect(() => { finRef.current?.scrollIntoView({ behavior: "smooth" }); }, [mensajes]);
 
   if (!conectado) {
     return (
