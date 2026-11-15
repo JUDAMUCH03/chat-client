@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Client } from "@stomp/stompjs";
+import EmojiPicker from "emoji-picker-react";
 
 export const SERVER = "http://localhost:8080";
 const WS_URL = "ws://localhost:8080/ws";
@@ -37,8 +38,8 @@ function rangoDe(nombre) {
   return RANGOS[hashTexto(nombre) % RANGOS.length];
 }
 
-function agenteDe(nombre) {
-  return AGENTES[hashTexto(nombre + "_ag") % AGENTES.length];
+function buscarAgente(nombreAgente) {
+  return AGENTES.find((a) => a.nombre === nombreAgente) || AGENTES[0];
 }
 
 function reproducirSonido(tipo) {
@@ -101,7 +102,11 @@ export default function App() {
   const [conectando, setConectando] = useState(false);
   const [errorConexion, setErrorConexion] = useState("");
   const [mensajes, setMensajes] = useState([]);
+  const [usuarios, setUsuarios] = useState([]);
   const [texto, setTexto] = useState("");
+  const [verEmojis, setVerEmojis] = useState(false);
+  const [subiendo, setSubiendo] = useState(false);
+  const [errorEnvio, setErrorEnvio] = useState("");
   const clientRef = useRef(null);
   const finRef = useRef(null);
   const sonidoRef = useRef(sonidoActivo);
@@ -136,10 +141,21 @@ export default function App() {
             reproducirSonido(nuevo.tipo);
           }
         });
+        client.subscribe("/topic/usuarios", (frame) => {
+          setUsuarios(JSON.parse(frame.body));
+        });
         client.publish({
           destination: "/app/chat.unirse",
-          body: JSON.stringify({ tipo: "UNION", autor: apodo }),
+          body: JSON.stringify({ tipo: "UNION", autor: apodo, contenido: miAgente.nombre }),
         });
+        setTimeout(() => {
+          fetch(SERVER + "/api/usuarios")
+            .then((r) => (r.ok ? r.json() : null))
+            .then((lista) => {
+              if (Array.isArray(lista)) setUsuarios(lista);
+            })
+            .catch(() => {});
+        }, 250);
       },
       onWebSocketError: () => {
         setConectando(false);
@@ -170,25 +186,45 @@ export default function App() {
     if (!texto.trim()) return;
     enviar("TEXTO", texto.trim());
     setTexto("");
+    setVerEmojis(false);
+  }
+
+  async function subir(archivo) {
+    const datos = new FormData();
+    datos.append("archivo", archivo);
+    const r = await fetch(SERVER + "/api/archivos", { method: "POST", body: datos });
+    if (!r.ok) {
+      throw new Error("No se pudo subir la imagen (máx. 5 MB).");
+    }
+    return (await r.json()).url;
+  }
+
+  async function manejarImagen(e) {
+    const archivo = e.target.files?.[0];
+    e.target.value = "";
+    if (!archivo) return;
+    setErrorEnvio("");
+    setSubiendo(true);
+    try {
+      const url = await subir(archivo);
+      enviar("IMAGEN", url);
+    } catch (err) {
+      setErrorEnvio(err.message || "Error al subir la imagen.");
+    } finally {
+      setSubiendo(false);
+    }
   }
 
   function alternarListo() {
     const siguiente = !listo;
     setListo(siguiente);
-    enviar(
-      "TEXTO",
-      siguiente
-        ? `Listo para buscar partida (${miAgente.nombre})`
-        : "En espera, cambiando agente"
-    );
+    enviar("TEXTO", siguiente ? "Listo para jugar" : "En espera");
   }
 
   useEffect(() => () => clientRef.current?.deactivate(), []);
   useEffect(() => {
     finRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [mensajes]);
-
-  const miRango = rangoDe(usuario || "Jugador");
 
   if (!conectado) {
     return (
@@ -291,12 +327,7 @@ export default function App() {
           <div className="val-hud-right">
             <div className="val-player-card" style={{ "--ag-color": miAgente.color }}>
               <span className="val-player-swatch" />
-              <div>
-                <strong>{usuario}</strong>
-                <small>
-                  {miAgente.nombre} · {miAgente.rol} · {miRango}
-                </small>
-              </div>
+              <strong>{usuario}</strong>
             </div>
 
             <button
@@ -318,68 +349,122 @@ export default function App() {
           </div>
         </header>
 
-        <div className="val-status-strip">
-          <span>AGENTE: {miAgente.nombre.toUpperCase()} ({miAgente.rol.toUpperCase()})</span>
-          <span>RANGO: {miRango}</span>
-          <span className={listo ? "val-st-ready" : ""}>
-            ESTADO: {listo ? "LISTO PARA BUSCAR PARTIDA" : "EN SALA DE ESPERA"}
-          </span>
-        </div>
+        <div className="val-content">
+          <aside className="val-sidebar" aria-label="Jugadores conectados">
+            <div className="val-sidebar-head">
+              <span>ESCUADRA EN LÍNEA</span>
+              <b>{usuarios.length}</b>
+            </div>
+            <ul className="val-users-list">
+              {usuarios.map((u, idx) => {
+                const esTu = u.nombre === usuario;
+                const ag = esTu ? miAgente : buscarAgente(u.agente);
+                const rg = rangoDe(u.nombre);
+                return (
+                  <li key={`${u.nombre}-${idx}`} className={esTu ? "is-me" : ""} style={{ "--ag-color": ag.color }}>
+                    <span className="val-user-bar" />
+                    <div className="val-user-info">
+                      <strong>
+                        {u.nombre} {esTu && <small className="val-you-tag">(TÚ)</small>}
+                      </strong>
+                      <span>
+                        {ag.nombre} · {rg}
+                      </span>
+                    </div>
+                    <span className="val-user-online" title="En línea" />
+                  </li>
+                );
+              })}
+            </ul>
+          </aside>
 
-        <ul className="mensajes">
-          {mensajes.map((m, i) => {
-            const esSistema = m.tipo === "UNION" || m.tipo === "SALIDA";
-            const esMio = m.autor === usuario;
-            const agenteAutor = esMio ? miAgente : agenteDe(m.autor || "Jugador");
-            const rangoAutor = rangoDe(m.autor || "Jugador");
+          <section className="val-chat-col">
+            <ul className="mensajes">
+              {mensajes.map((m, i) => {
+                const esSistema = m.tipo === "UNION" || m.tipo === "SALIDA";
+                const esMio = m.autor === usuario;
+                const conectado = usuarios.find((u) => u.nombre === m.autor);
+                const agenteAutor = esMio
+                  ? miAgente
+                  : buscarAgente(conectado?.agente);
 
-            if (esSistema) {
-              return (
-                <li
-                  key={i}
-                  className={`sistema ${m.tipo === "SALIDA" ? "sistema-salida" : "sistema-union"}`}
+                if (esSistema) {
+                  return (
+                    <li
+                      key={i}
+                      className={`sistema ${m.tipo === "SALIDA" ? "sistema-salida" : "sistema-union"}`}
+                    >
+                      <span className="sys-dot" aria-hidden="true" />
+                      <span className="sys-text">{m.contenido}</span>
+                      <small>{m.fecha}</small>
+                    </li>
+                  );
+                }
+
+                return (
+                  <li
+                    key={i}
+                    className={esMio ? "mio" : "otro"}
+                    style={{ "--ag-color": agenteAutor.color }}
+                  >
+                    <div className="msg-head">
+                      <b>{m.autor}</b>
+                    </div>
+                    <div className="msg-body">
+                      {m.tipo === "TEXTO" && <span>{m.contenido}</span>}
+                      {m.tipo === "IMAGEN" && <img src={SERVER + m.contenido} alt="Imagen compartida" />}
+                      {m.tipo === "AUDIO" && <audio controls src={SERVER + m.contenido} />}
+                    </div>
+                    <small>{m.fecha}</small>
+                  </li>
+                );
+              })}
+              <li ref={finRef} />
+            </ul>
+
+            {errorEnvio && <p className="val-error val-send-error">{errorEnvio}</p>}
+
+            <div className="val-composer-wrap">
+              {verEmojis && (
+                <div className="val-emoji-popover">
+                  <EmojiPicker
+                    theme="dark"
+                    searchPlaceholder="Buscar emoji..."
+                    onEmojiClick={(e) => setTexto((t) => t + e.emoji)}
+                  />
+                </div>
+              )}
+
+              <form onSubmit={enviarTexto} className="barra">
+                <span className="val-channel-tag">GRUPO</span>
+                <button
+                  type="button"
+                  className={`val-tool-btn ${verEmojis ? "is-active" : ""}`}
+                  onClick={() => setVerEmojis((v) => !v)}
+                  title="Insertar emoji"
                 >
-                  <span className="sys-tag">
-                    {m.tipo === "UNION" ? "SE UNIÓ" : "SALIÓ"}
-                  </span>
-                  <span className="sys-text">{m.contenido}</span>
-                  <small>{m.fecha}</small>
-                </li>
-              );
-            }
-
-            return (
-              <li
-                key={i}
-                className={esMio ? "mio" : "otro"}
-                style={{ "--ag-color": agenteAutor.color }}
-              >
-                <div className="msg-head">
-                  <span className="msg-agent">{agenteAutor.nombre}</span>
-                  <span className="msg-rank">{rangoAutor}</span>
-                  <b>{m.autor}</b>
-                </div>
-                <div className="msg-body">
-                  {m.tipo === "TEXTO" && <span>{m.contenido}</span>}
-                  {m.tipo === "IMAGEN" && <img src={SERVER + m.contenido} alt="Imagen compartida" />}
-                  {m.tipo === "AUDIO" && <audio controls src={SERVER + m.contenido} />}
-                </div>
-                <small>{m.fecha}</small>
-              </li>
-            );
-          })}
-          <li ref={finRef} />
-        </ul>
-
-        <form onSubmit={enviarTexto} className="barra">
-          <span className="val-channel-tag">GRUPO</span>
-          <input
-            value={texto}
-            onChange={(e) => setTexto(e.target.value)}
-            placeholder="Escribe al chat del grupo..."
-          />
-          <button type="submit">ENVIAR</button>
-        </form>
+                  EMOJIS
+                </button>
+                <label className={`val-tool-btn ${subiendo ? "is-busy" : ""}`} title="Enviar imagen">
+                  {subiendo ? "SUBIENDO..." : "IMAGEN"}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={manejarImagen}
+                    disabled={subiendo}
+                    hidden
+                  />
+                </label>
+                <input
+                  value={texto}
+                  onChange={(e) => setTexto(e.target.value)}
+                  placeholder="Escribe al chat del grupo..."
+                />
+                <button type="submit">ENVIAR</button>
+              </form>
+            </div>
+          </section>
+        </div>
       </main>
     </div>
   );
