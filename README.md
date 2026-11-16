@@ -39,8 +39,10 @@ Cliente web en **React + Vite** para el chat en tiempo real sobre **WebSocket y 
   2. **Imágenes:** carga de archivos por HTTP (`POST /api/archivos`) y previsualización dentro del chat.
   3. **Quién está conectado:** panel lateral **ESCUADRA EN LÍNEA** mostrando cada jugador con su agente y rango en tiempo real.
 
+**Pantalla inicial con selector de agente y mapa de Valorant:**  
 ![Pantalla inicial con selector de agente de Valorant](docs/capturas/chat-pantalla-inicial.png)
 
+**Sala de grupo con conectados en línea y selector de emojis:**  
 ![Chat con tema Valorant, conectados y selector de emojis](docs/capturas/chat-selector-emojis.png)
 
 ## Observabilidad del proyecto
@@ -54,4 +56,5 @@ docker compose up -d
 
 Luego accede a Grafana en `http://localhost:3000` e importa `chat-server/observabilidad/dashboard-chat.json`.
 
+**Tablero `Chat en vivo` en Grafana con métricas del chat y logs:**  
 ![Tablero de observabilidad Chat en vivo en Grafana](docs/capturas/grafana-dashboard.png)
